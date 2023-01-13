@@ -2,15 +2,22 @@ package id.kawahedukasi.batch5.controller;
 
 import id.kawahedukasi.batch5.model.Item;
 
+import id.kawahedukasi.batch5.model.UploadItemRequest;
+import id.kawahedukasi.batch5.service.ItemService;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
+import net.sf.jasperreports.engine.JRException;
 import org.hibernate.PropertyValueException;
+import org.jboss.resteasy.annotations.providers.multipart.MultipartForm;
 import org.postgresql.util.PSQLException;
 
+import javax.inject.Inject;
 import javax.management.Query;
 import javax.transaction.Transactional;
 import javax.ws.rs.*;
+import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.util.List;
@@ -18,55 +25,42 @@ import java.util.Locale;
 import java.util.Map;
 
 @Path("/item")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
 public class ItemController {
 
-    public boolean isEmptyVal(JsonObject request, String key) {
-        return request.containsKey(key);
-    }
+    @Inject
+    ItemService itemService;
 
-    public boolean validRequest(JsonObject request, String... keys) {
-        for(String key: keys) {
-            if(!request.containsKey(key)) return false;
-        }
-        return true;
+    @GET
+    @Path("/report")
+    @Produces("application/pdf")
+    public Response createReport() throws JRException {
+        return itemService.exportJasper();
     }
-
 
     @POST
-    @Transactional
+    @Path("/upload")
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    public Response upload(@MultipartForm UploadItemRequest request) throws IOException {
+        return itemService.upload(request);
+    }
+
+    @GET
+    @Path("/download")
+    @Produces("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    public Response download() throws IOException {
+        return itemService.download();
+    }
+
+    @POST
     public Response create(JsonObject request) {
-        Item item = new Item();
-
-        if(!validRequest(request, "name", "type")) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                .entity(Map.of("message", "name and type cannot be null."))
-                .build();
-        }
-        String inputName = request.getString("name");
-        if(Item.find("UPPER(name) = ?1", inputName.toUpperCase(Locale.ROOT)).list().size() > 0) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(Map.of("message", "Name already used."))
-                    .build();
-        }
-
-        item.name = inputName;
-        item.count = isEmptyVal(request, "count") ? request.getInteger("count") : 0;
-        item.price = BigDecimal.valueOf(isEmptyVal(request, "price") ? request.getDouble("price") : 0.0);
-        item.type = request.getString("type");
-        item.description = request.getString("description");
-        if(item.price.compareTo(BigDecimal.ZERO) < 0) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(Map.of("message", "price can't be negative."))
-                    .build();
-        }
-        item.persist();
-
-        return Response.ok().entity(Map.of("message", "Success added a new data.")).build();
+        return itemService.create(request);
     }
 
     @GET
     public Response listItems() {
-        return Response.ok().entity(Item.listAll()).build();
+        return itemService.listItems();
     }
 
     @GET
@@ -74,86 +68,31 @@ public class ItemController {
     public Response searchItems(@QueryParam("q") String query,
                                 @QueryParam("min") Double min,
                                 @QueryParam("max") Double max) {
-        String findQuery = "";
-        if(query != null) {
-            findQuery+="UPPER(name) LIKE '%"+query.toUpperCase(Locale.ROOT)+"%'";
-            if(min != null && max != null) {
-                findQuery += " AND price BETWEEN " + min + " AND " + max;
-            } else {
-                findQuery += " AND price " + (min != null?">=":"<=") + " " +(min != null?min:max);
-            }
-            List<Item> items = Item.find(findQuery).list();
-            return Response.ok().entity(Map.of("query", findQuery, "data", items)).build();
-        }
-        return Response.status(Response.Status.BAD_REQUEST)
-                .entity(Map.of("message", "keyword unprovided."))
-                .build();
+        return itemService.searchItems(query, min, max);
     }
 
     @GET
     @Path("/{id}")
     public Response getById(@PathParam("id") Long id) {
-        Item item = Item.findById(id);
-        return item != null ? Response.ok().entity(item).build() : Response.status(Response.Status.BAD_REQUEST)
-                .entity(Map.of("message", "item not found"))
-                .build();
+        return itemService.getById(id);
     }
 
     @GET
     @Path("/type/{type}")
     public Response getByType(@PathParam("type") String type) {
-        List<Item> items = Item.find("UPPER(type) = ?1", type.toUpperCase(Locale.ROOT)).list();
-        return Response.ok().entity(items).build();
+        return itemService.getByType(type);
     }
 
     @PUT
-    @Transactional
     @Path("/{id}")
     public Response update(@PathParam("id") Long id, JsonObject request) {
-        Item item = Item.findById(id);
-        if(!validRequest(request, "name", "type")) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(Map.of("message", "name and type cannot be null."))
-                    .build();
-        } else if(item == null) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(Map.of("message", "item not found."))
-                    .build();
-        }
-        String inputName = request.getString("name");
-        if(Item.find("UPPER(name) = ?1", inputName.toUpperCase(Locale.ROOT)).list().size() > 0) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(Map.of("message", "Name already used."))
-                    .build();
-        }
-
-        item.name = inputName;
-        item.count = request.getInteger("count");
-        item.price = BigDecimal.valueOf(request.getDouble("price"));
-        item.type = request.getString("type");
-        item.description = request.getString("description");
-        if(item.price.compareTo(BigDecimal.ZERO) < 0) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(Map.of("message", "price can't be negative."))
-                    .build();
-        }
-        item.persist();
-
-        return Response.ok().entity(Map.of("message", "Success modified a data.", "data", item)).build();
+        return itemService.update(id, request);
     }
 
     @DELETE
-    @Transactional
     @Path("/{id}")
     public Response delete(@PathParam("id") Long id){
-        Item item = Item.findById(id);
-        if(item != null) {
-            Item.deleteById(id);
-            return Response.ok().entity(Map.of("message", "Success deleted a data.")).build();
-        } else{
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(Map.of("message", "item not found."))
-                    .build();
-        }
+        return itemService.delete(id);
     }
+
 }

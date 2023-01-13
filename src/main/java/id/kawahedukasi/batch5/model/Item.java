@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 
 @Entity
 @Table(name = "item")
+@NamedQuery(name = "Item.deleteIfCountZero", query = "delete from Item i where i.count = 0")
 public class Item extends HistoryModel {
     @Id
     @SequenceGenerator(
@@ -19,7 +20,7 @@ public class Item extends HistoryModel {
     @Column(name = "id")
     public Long id;
 
-    @Column(name = "name", nullable = false, length = 50, unique = true)
+    @Column(name = "name", nullable = false, length = 50)
     public String name;
 
     @Column(name = "count")
@@ -33,5 +34,9 @@ public class Item extends HistoryModel {
 
     @Column(name = "description")
     public String description;
+
+    public static long deleteIfCountZero() {
+        return delete("#Item.deleteIfCountZero");
+    }
 
 }
